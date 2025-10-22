@@ -264,8 +264,18 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     _LOGGER.warning(f"Ungültiger cloud_coverage Wert: {cloud}, wird ignoriert.")
             if precip and precip > 0: wf *= 0.5
             pred = self.base_capacity * wf * self.weights['base']
-            for st in ['lux', 'temp', 'wind', 'uv', 'rain']:
+            
+            # Logarithmische Lux-Skalierung für realistische Werte
+            if 'lux' in data and data['lux'] > 0:
+                import math
+                normalized_lux = max(1, data['lux'] / 1000)  # Verhindert Log(0)
+                lux_contribution = math.log10(normalized_lux) * self.weights.get('lux', 0.3)
+                pred += lux_contribution
+            
+            # Lineare Skalierung für andere Sensoren
+            for st in ['temp', 'wind', 'uv', 'rain']:
                 if st in data: pred += data[st] * self.weights.get(st, 0)
+            
             if 'rain' in data and data['rain'] > 0.1: pred *= 0.5
             if is_today and 'fs' in data:
                 fs_blend = self.weights.get('fs', 0.5)

@@ -51,9 +51,9 @@ OLD_HOURLY_PROFILE_FILE = f"{OLD_DATA_DIR}/hourly_profile.json"
 # --- Modell-Konstanten ---
 DEFAULT_WEIGHTS = {
     'base': 1.0, 
-    'lux': 0.0002,  # KORREKTUR: Drastisch reduziert von 0.1, um utopische Werte zu verhindern
+    'lux': 0.3,     # Für logarithmische Skalierung optimiert
     'temp': 0.05,
-    'wind': -0.02, 
+    'wind': 0.01,   # KORRIGIERT: Positiv (Wind kühlt Module = bessere Leistung)
     'uv': 0.08, 
     'fs': 0.5, 
     'rain': -0.2
