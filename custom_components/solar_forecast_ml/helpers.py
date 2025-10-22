@@ -89,20 +89,40 @@ def _migrate_data_files():
 def calculate_initial_base_capacity(plant_kwp: float) -> float:
     """
     Intelligente Startwert-Berechnung der Basiskapazität basierend auf der Anlagenleistung (kWp).
-    Verwendet eine Faustformel und begrenzt den Wert auf einen realistischen Bereich.
+    Optimiert mit saisonalen Faktoren basierend auf realen 50kWp Anlagen-Daten über 12 Monate.
     """
     if not isinstance(plant_kwp, (int, float)) or plant_kwp <= 0:
         return DEFAULT_BASE_CAPACITY
         
-    avg_sun_hours = 3.5  # Durchschnittliche Sonnenstunden in DE
-    system_efficiency = 0.85 # Geschätzte Systemeffizienz
-    base_capacity = plant_kwp * avg_sun_hours * system_efficiency
+    # Saisonale Durchschnittswerte aus Ihren echten Daten (50kWp Anlage)
+    # Winter: ~100 kWh/Tag, Frühling: ~200 kWh/Tag, Sommer: ~320 kWh/Tag, Herbst: ~200 kWh/Tag
+    # Jahres-Durchschnitt: (100+200+320+200)/4 = 205 kWh/Tag
+    import datetime
+    now = datetime.datetime.now()
+    month = now.month
     
-    # Begrenzung auf einen sinnvollen Bereich (Clamping)
-    min_capacity = plant_kwp * 2.0
-    max_capacity = plant_kwp * 5.0
+    # Saisonale kWh pro kWp basierend auf echten Daten
+    if month in [12, 1, 2]:  # Winter
+        daily_kwh_per_kwp = 100 / 50  # 2.0 kWh/kWp
+    elif month in [3, 4, 5]:  # Frühling
+        daily_kwh_per_kwp = 200 / 50  # 4.0 kWh/kWp
+    elif month in [6, 7, 8]:  # Sommer
+        daily_kwh_per_kwp = 320 / 50  # 6.4 kWh/kWp
+    else:  # Herbst (9,10,11)
+        daily_kwh_per_kwp = 200 / 50  # 4.0 kWh/kWp
+    
+    base_capacity = plant_kwp * daily_kwh_per_kwp
+    
+    # Begrenzung auf realistischen Bereich pro Saison
+    min_capacity = plant_kwp * 1.5  # Sehr schlechte Tage
+    max_capacity = plant_kwp * 8.0  # Absolute Spitzentage (Sommer)
     clamped_capacity = max(min_capacity, min(max_capacity, base_capacity))
     
-    _LOGGER.info(f"🏭 Quick-Kalibrierung: kWp={plant_kwp:.2f} → Base Capacity={clamped_capacity:.2f} kWh")
+    season_names = {12: "Winter", 1: "Winter", 2: "Winter", 
+                   3: "Frühling", 4: "Frühling", 5: "Frühling",
+                   6: "Sommer", 7: "Sommer", 8: "Sommer",
+                   9: "Herbst", 10: "Herbst", 11: "Herbst"}
+    
+    _LOGGER.info(f"🏭 Saisonale Kalibrierung ({season_names[month]}): kWp={plant_kwp:.2f} → Base Capacity={clamped_capacity:.2f} kWh")
     return clamped_capacity
 
