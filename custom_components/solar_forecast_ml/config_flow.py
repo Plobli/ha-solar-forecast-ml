@@ -3,6 +3,21 @@ Config flow für die Solar Forecast ML Integration.
 
 Diese Datei definiert die Benutzeroberfläche, die beim Hinzufügen und
 Konfigurieren der Integration in Home Assistant angezeigt wird.
+
+Copyright (C) 2025 Zara-Toorox
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 from __future__ import annotations
 from typing import Any
@@ -192,10 +207,19 @@ class SolarForecastMLConfigFlow(config_entries.ConfigFlow):
                 await self.async_set_unique_id(new_unique_id)
                 pass
 
-            cleaned_data = {**entry.data, **user_input}
+            # --- KORREKTUR (START) ---
+            # Wir dürfen NICHT {**entry.data, **user_input} verwenden.
+            # Das führt dazu, dass gelöschte (leere) Felder mit den alten
+            # Werten aus entry.data wieder aufgefüllt werden.
+            # Wir verwenden user_input.copy() als alleinige Basis.
+            cleaned_data = user_input.copy()
+            
+            # Diese Schleife ist weiterhin wichtig, um 'None' (von
+            # gelöschten Entity-Selektoren) in '""' umzuwandeln.
             for key, value in cleaned_data.items():
                 if value is None:
                     cleaned_data[key] = ""
+            # --- KORREKTUR (ENDE) ---
 
             return self.async_update_reload_and_abort(
                 entry,

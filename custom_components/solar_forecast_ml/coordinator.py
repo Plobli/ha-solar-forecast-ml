@@ -3,6 +3,21 @@ DataUpdateCoordinator for the Solar Forecast ML integration.
 
 This file contains the central logic for data fetching, processing,
 and machine learning, including all feature updates.
+
+Copyright (C) 2025 Zara-Toorox
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 import asyncio
 import logging
@@ -11,6 +26,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant, State # State Import für die Typisierung (ursprünglicher Code hatte nur HomeAssistant)
 from homeassistant.helpers.event import async_track_time_change
@@ -65,7 +81,6 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         self.notify_startup = config.get(CONF_NOTIFY_STARTUP, True)
         self.notify_successful_learning = config.get(CONF_NOTIFY_SUCCESSFUL_LEARNING, True)
 
-        # KORREKTUR (FIX): Behebt den AttributeError 'float' object
         plant_kwp_val = config.get(CONF_PLANT_KWP)
         plant_kwp_float = 0.0
         if plant_kwp_val: 
@@ -100,16 +115,17 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         self.peak_production_time_today = "Wird berechnet..."
 
         # --- Initialisierung und Zeitplanung ---
-        hass.async_create_task(self._initial_setup())
         async_track_time_change(hass, self._morning_forecast, hour=6, minute=0, second=0)
         async_track_time_change(hass, self._midnight_learning, hour=23, minute=0, second=0)
         if self.current_power_sensor:
             async_track_time_change(hass, self._collect_hourly_data, minute=0, second=0)
 
-    # *** WICHTIGE ÄNDERUNG: _safe_service_call wurde entfernt, da es den Fehler verursacht hat. ***
     
-    async def _initial_setup(self):
-        """Führt initiales Laden von Daten durch."""
+    async def async_load_initial_data(self):
+        """
+        Führt initiales Laden von persistenten Daten (Weights, History, Profile) durch.
+        Wird von __init__.py VOR dem ersten Refresh aufgerufen.
+        """
         async with self.data_lock:
             await self._async_load_weights()
             await self._load_history()
@@ -157,7 +173,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         async with self.data_lock:
             try:
                 today_iso = date.today().isoformat()
-                state: State | None = self.hass.states.get(self.power_entity) # Expliziter State Import hinzugefügt
+                state: State | None = self.hass.states.get(self.power_entity) 
                 actual_value = 0.0
                 if state and state.state not in ['unknown', 'unavailable']:
                     try:
@@ -165,9 +181,12 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                         if actual_value > 0:
                             if today_iso not in self.daily_predictions: self.daily_predictions[today_iso] = {}
                             self.daily_predictions[today_iso]['actual'] = actual_value
-                            await self._async_save_history() # Verwendet nun die asynchrone Save-Funktion
+                            await self._async_save_history() 
                             self._calculate_autarky(actual_value)
-                    except ValueError: pass # Ignoriert, falls Wert nicht konvertierbar ist
+                    # --- KORREKTUR (START) ---
+                    # Fängt jetzt TypeError (z.B. float(None)) und ValueError (z.B. float("text")) ab
+                    except (ValueError, TypeError): pass 
+                    # --- KORREKTUR (ENDE) ---
                 
                 yesterday_iso = (date.today() - timedelta(days=1)).isoformat()
                 if yesterday_iso in self.daily_predictions:
@@ -193,8 +212,8 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     else:
                         _LOGGER.warning(f"⏩ Überspringe Lernen für {yesterday_iso}: Actual={actual:.2f}, Predicted={pred:.2f}.")
                 
-                await self._async_save_weights() # Speichert auch, wenn kein Learning stattfand
-                await self._async_save_history() # Speichert auch, wenn kein Learning stattfand (nur Aktualisierung des heutigen Actual)
+                await self._async_save_weights() 
+                await self._async_save_history() 
             except Exception as e: _LOGGER.error(f"❌ Fehler beim Midnight Learning: {e}", exc_info=True)
 
 
@@ -209,7 +228,10 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     self.autarky_today = (direct_consumption / total_consumption) * 100
                 else:
                     self.autarky_today = 100.0
-            except ValueError: self.autarky_today = None
+            # --- KORREKTUR (START) ---
+            # Fängt jetzt TypeError (z.B. float(None)) und ValueError (z.B. float("text")) ab
+            except (ValueError, TypeError): self.autarky_today = None
+            # --- KORREKTUR (ENDE) ---
 
     def _calculate_peak_production_hour(self):
         if not self.hourly_profile or not isinstance(self.hourly_profile, dict): 
@@ -227,7 +249,6 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         async with self.data_lock:
             await self._load_history() 
             try:
-                # *** Änderung: Nutzt nun die einfache, funktionierende Methode ohne Retries und _safe_call ***
                 forecasts = await self._get_weather_forecast() 
                 
                 if not forecasts or len(forecasts) < 2: 
@@ -242,7 +263,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                 today = date.today().isoformat()
                 if today not in self.daily_predictions: self.daily_predictions[today] = {}
                 self.daily_predictions[today].update({'predicted': heute_kwh, 'predicted_morgen': morgen_kwh, 'features': data})
-                await self._async_save_history() # Verwendet nun die asynchrone Save-Funktion
+                await self._async_save_history() 
 
                 self.data = {"heute": round(heute_kwh, 2), "morgen": round(morgen_kwh, 2), "genauigkeit": round(self.accuracy, 1)}
                 self.last_forecast_date = date.today()
@@ -257,7 +278,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
             cond, cloud, precip = forecast.get('condition','cloudy'), forecast.get('cloud_coverage', 50), forecast.get('precipitation', 0)
             wf = WEATHER_FACTORS.get(cond, 0.4)
             if cloud is not None: 
-                try: # Zusätzliche Sicherung gegen ungültige cloud-Typen (wie im ersten Code)
+                try: 
                     cloud_float = float(cloud)
                     wf *= (0.5 + 0.5 * (1 - (cloud_float / 100.0)))
                 except (ValueError, TypeError):
@@ -295,19 +316,43 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         return data
 
     def _detect_weather_type(self) -> str:
-        if not self.weather_entity: return 'generic' # Fallback-Ergänzung
+        if not self.weather_entity: return 'generic' 
         entity_id = self.weather_entity.lower()
         if 'dwd' in entity_id or 'deutscher_wetterdienst' in entity_id: return 'dwd'
         if 'met' in entity_id or 'forecast_home' in entity_id: return 'met.no'
         if 'openweather' in entity_id: return 'openweathermap'
         return 'generic'
 
+    # --- KORREKTUR (START) ---
     async def _detect_forecast_method(self) -> str | None:
-        """KORRIGIERTER WETTER-ABRUF: Nutzt blocking=True und Retries der alten, funktionierenden Logik."""
-        for attempt in range(1, 4):
-            if attempt > 1: await asyncio.sleep(2 if attempt == 2 else 5)
+        """
+        KORRIGIERTER WETTER-ABRUF: Wartet, bis die Entität verfügbar ist,
+        bevor der Service aufgerufen wird, um Startfehler zu vermeiden.
+        """
+        for attempt in range(1, MAX_RETRIES + 1):
+            if attempt > 1: 
+                # Wartezeit zwischen den Versuchen
+                delay = INITIAL_RETRY_DELAY * (attempt - 1)
+                await asyncio.sleep(delay)
+
+            # --- NEUE STABILITÄTSPRÜFUNG ---
+            # Prüfen, ob die Entität überhaupt im hass.states-Register vorhanden ist.
+            state: State | None = self.hass.states.get(self.weather_entity)
+            
+            if not state or state.state == 'unavailable':
+                _LOGGER.debug(
+                    f"Wetter-Entität '{self.weather_entity}' ist noch nicht verfügbar "
+                    f"(Versuch {attempt}/{MAX_RETRIES}). Warte {INITIAL_RETRY_DELAY * attempt}s..."
+                )
+                continue # Springe zur nächsten Iteration (und damit zum sleep)
+            
+            # --- ENDE STABILITÄTSPRÜFUNG ---
+
+            # Wenn wir hier sind, ist die Entität (state) vorhanden.
+            # Wir können jetzt sicher versuchen, darauf zuzugreifen.
+
+            # Versuch 1: Service Call (blocking=True ist der Schlüssel)
             try:
-                # Versuch 1: Service Call (blocking=True ist der Schlüssel)
                 response = await self.hass.services.async_call(
                     "weather", 
                     "get_forecasts", 
@@ -315,21 +360,27 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     blocking=True, # WICHTIG: Erlaubt das Warten auf die Antwort
                     return_response=True
                 )
+                # Prüfen, ob die *Antwort* die *Daten* (forecast) enthält
                 if response and (response.get(self.weather_entity, {}).get("forecast") or response.get("forecast")): 
+                    _LOGGER.info(f"✅ Wetter-Prognose-Methode 'service' erfolgreich erkannt (Versuch {attempt}).")
                     return "service"
-            except Exception: 
-                pass # Ignoriere Fehler und versuche Attribut
+            except Exception as e: 
+                _LOGGER.debug(f"Service-Call-Versuch {attempt} fehlgeschlagen ({e}), versuche Attribut...")
+                pass # Ignoriere Service-Fehler und versuche Attribut
             
+            # Versuch 2: Attribut lesen (Fallback)
             try:
-                # Versuch 2: Attribut lesen
-                state: State | None = self.hass.states.get(self.weather_entity)
-                if state and state.attributes.get('forecast'): 
+                # Wir verwenden 'state' von der Prüfung oben
+                if state.attributes.get('forecast'): 
+                    _LOGGER.info(f"✅ Wetter-Prognose-Methode 'attribute' erfolgreich erkannt (Versuch {attempt}).")
                     return "attribute"
-            except Exception: 
-                pass # Ignoriere Fehler und versuche Retry
+            except Exception as e: 
+                _LOGGER.debug(f"Attribut-Check-Versuch {attempt} fehlgeschlagen ({e}).")
+                pass # Ignoriere Fehler und versuche Retry in der nächsten Schleife
                 
-        _LOGGER.error("❌ Keine funktionierende Forecast-Methode gefunden!")
+        _LOGGER.error(f"❌ Keine funktionierende Forecast-Methode nach {MAX_RETRIES} Versuchen gefunden!")
         return None
+    # --- KORREKTUR (ENDE) ---
 
     async def _get_weather_forecast(self) -> List[Dict[str, Any]]:
         """KORRIGIERTER WETTER-ABRUF: Implementiert das funktionierende Muster."""
@@ -345,7 +396,6 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     blocking=True, 
                     return_response=True
                 )
-                # Sicherstellen, dass response kein None ist (optional, aber gut)
                 if response is None: return [] 
 
                 return response.get(self.weather_entity, {}).get("forecast") or response.get("forecast", [])
@@ -368,14 +418,13 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                 "weather", 
                 "get_forecasts", 
                 {"type": "hourly", "entity_id": self.weather_entity}, 
-                blocking=True, # WICHTIG: Erlaubt das Warten auf die Antwort
+                blocking=True, 
                 return_response=True
             )
-            # Fängt den 'NoneType' object has no attribute 'get' Fehler ab
             if response is None:
-                 _LOGGER.warning("Service-Call für stündliche Prognose gab None zurück.")
-                 return []
-                 
+                _LOGGER.warning("Service-Call für stündliche Prognose gab None zurück.")
+                return []
+                
             forecasts = response.get(self.weather_entity, {}).get("forecast", [])
             if forecasts:
                 return forecasts
@@ -386,7 +435,6 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
             return []
 
     def _is_night_time(self) -> bool:
-        # Verwendet nun Sonnenaufgang/-untergang, falls verfügbar
         try:
             now = dt_util.now()
             sunrise = get_astral_event_date(self.hass, SUN_EVENT_SUNRISE, now.date())
@@ -394,16 +442,18 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
             if sunrise and sunset:
                 sunrise = dt_util.as_local(sunrise)
                 sunset = dt_util.as_local(sunset)
-                # 30 Minuten Puffer
                 return now < (sunrise - timedelta(minutes=30)) or now > (sunset + timedelta(minutes=30))
         except Exception:
-            pass # Fallback auf fixe Zeiten
+            pass 
             
-        # Fallback
         return datetime.now().hour < 6 or datetime.now().hour >= 21
 
     async def _collect_hourly_data(self, now):
         if not self.current_power_sensor: return
+        
+        if now.hour == 0 and (self.last_hourly_collection is None or self.last_hourly_collection != 0):
+            _LOGGER.debug("Neuer Tag erkannt (0 Uhr): Setze today_hourly_data zurück.")
+            self.today_hourly_data = {}
         
         if self.last_hourly_collection == now.hour: return
 
@@ -419,8 +469,8 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                         power_watts = float(state.state)
                         kwh_this_hour = power_watts / 1000.0
                     except (ValueError, TypeError):
-                         _LOGGER.debug(f"Ungültiger Wert '{state.state}' vom Sensor {self.current_power_sensor}, setze Stunde auf 0 kWh.")
-                         kwh_this_hour = 0.0
+                        _LOGGER.debug(f"Ungültiger Wert '{state.state}' vom Sensor {self.current_power_sensor}, setze Stunde auf 0 kWh.")
+                        kwh_this_hour = 0.0
                     except Exception as e:
                         _LOGGER.error(f"Unerwarteter Fehler beim Lesen von {self.current_power_sensor}: {e}", exc_info=True)
                         kwh_this_hour = 0.0
@@ -432,7 +482,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     if today in self.daily_predictions:
                         if 'hourly_data' not in self.daily_predictions[today]: self.daily_predictions[today]['hourly_data'] = {}
                         self.daily_predictions[today]['hourly_data'].update(self.today_hourly_data)
-                        await self._async_save_history() # Verwendet nun die asynchrone Save-Funktion
+                        await self._async_save_history() 
             except Exception as e: _LOGGER.error(f"Fehler bei stündlicher Datensammlung: {e}", exc_info=True)
     
     def _calculate_average_yield(self):
@@ -446,8 +496,8 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
 
     async def _load_hourly_profile(self): 
         self.hourly_profile = await self.hass.async_add_executor_job(_read_history_file, HOURLY_PROFILE_FILE)
-        if not self.hourly_profile or not isinstance(self.hourly_profile, dict): # Zusätzliche Typprüfung
-            self.hourly_profile = {str(h): (1/24) for h in range(24)} # Startet mit gleichmäßigem Profil
+        if not self.hourly_profile or not isinstance(self.hourly_profile, dict): 
+            self.hourly_profile = {str(h): (1/24) for h in range(24)} 
             _LOGGER.info("Kein Stundenprofil gefunden oder ungültig, starte mit gleichmäßigem Profil.")
 
     async def _async_save_hourly_profile(self): 
@@ -456,8 +506,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
 
     async def _async_load_weights(self): 
         d = await self.hass.async_add_executor_job(_read_history_file, WEIGHTS_FILE)
-        if d and isinstance(d, dict): # Zusätzliche Typprüfung
-            # Lade nur erlaubte Schlüssel
+        if d and isinstance(d, dict): 
             valid_keys = list(DEFAULT_WEIGHTS.keys()) + ['base_capacity']
             loaded_weights = {k: v for k, v in d.items() if k in valid_keys and isinstance(v, (int, float))}
             self.weights.update(loaded_weights)
@@ -470,30 +519,26 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(_write_history_file, WEIGHTS_FILE, {**self.weights, 'base_capacity': self.base_capacity})
         _LOGGER.debug("Gewichte gespeichert.")
     
-    # *** WICHTIGE ÄNDERUNG: _save_weights wurde entfernt und alle Aufrufe auf das asynchrone _async_save_weights umgestellt. ***
-
     async def _load_history(self): 
-        # FIX: Robustes Laden – falls Datei fehlt, starte mit leerem Dict
         self.daily_predictions = await self.hass.async_add_executor_job(_read_history_file, HISTORY_FILE)
-        if not self.daily_predictions or not isinstance(self.daily_predictions, dict): # Sicherstellen, dass's ein Dict ist
+        if not self.daily_predictions or not isinstance(self.daily_predictions, dict): 
             self.daily_predictions = {} 
         _LOGGER.debug(f"History geladen: {len(self.daily_predictions)} Tage.")
     
     async def _async_save_history(self): 
-        # Bereinigung alter Einträge (ursprüngliche Logik aus dem ersten Code)
         today = date.today()
         cutoff_date = today - timedelta(days=365)
         keys_to_delete = []
         for day_str in list(self.daily_predictions.keys()):
             if not isinstance(day_str, str) or len(day_str) != 10 or day_str[4] != '-' or day_str[7] != '-':
-                 _LOGGER.warning(f"Ungültiger Datumsschlüssel '{day_str}' in History gefunden, wird ignoriert.")
-                 continue
+                _LOGGER.warning(f"Ungültiger Datumsschlüssel '{day_str}' in History gefunden, wird ignoriert.")
+                continue
             try:
-                 day_date = date.fromisoformat(day_str)
-                 if day_date < cutoff_date:
-                     keys_to_delete.append(day_str)
+                day_date = date.fromisoformat(day_str)
+                if day_date < cutoff_date:
+                    keys_to_delete.append(day_str)
             except ValueError:
-                 _LOGGER.warning(f"Ungültiger Datumsschlüssel '{day_str}' in History gefunden, wird ignoriert.")
+                _LOGGER.warning(f"Ungültiger Datumsschlüssel '{day_str}' in History gefunden, wird ignoriert.")
 
         if keys_to_delete:
             _LOGGER.info(f"Entferne {len(keys_to_delete)} alte History-Einträge (älter als 365 Tage)...")
@@ -507,14 +552,12 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(_write_history_file, HISTORY_FILE, self.daily_predictions)
         _LOGGER.debug(f"History gespeichert: {len(self.daily_predictions)} Tage.")
 
-    # *** WICHTIGE ÄNDERUNG: _save_history wurde entfernt und alle Aufrufe auf das asynchrone _async_save_history umgestellt. ***
-
 
     def _load_last_data(self):
         if self.daily_predictions:
             today, yesterday = date.today().isoformat(), (date.today() - timedelta(days=1)).isoformat()
             last = self.daily_predictions.get(today) or self.daily_predictions.get(yesterday)
-            if last and isinstance(last, dict) and 'predicted' in last: # Zusätzliche Typprüfung
+            if last and isinstance(last, dict) and 'predicted' in last: 
                 self.data = {"heute": last.get('predicted',0), "morgen": last.get('predicted_morgen', 0), "genauigkeit": self.accuracy}
 
     async def _notify_start_success(self):
@@ -526,7 +569,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
             avg = sum(actuals)/len(actuals)
             if avg > self.base_capacity * 0.5: 
                 self.base_capacity = avg
-                self.hass.async_create_task(self._async_save_weights()) # Direkter Task-Aufruf
+                self.hass.async_create_task(self._async_save_weights()) 
 
     async def _morning_forecast(self, now):
         await self._create_forecast()
@@ -543,7 +586,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
         })
 
     def _calculate_accuracy(self):
-        errors = [abs((d['actual']-d.get('predicted',0))/d['actual'])*100 for d in list(self.daily_predictions.values())[-30:] if isinstance(d,dict) and d.get('actual',0)>0 and d.get('predicted') is not None] # Zusätzlicher None Check
+        errors = [abs((d['actual']-d.get('predicted',0))/d['actual'])*100 for d in list(self.daily_predictions.values())[-30:] if isinstance(d,dict) and d.get('actual',0)>0 and d.get('predicted') is not None] 
         if errors: self.accuracy = max(0, 100 - (sum(errors) / len(errors)))
 
     async def _notify_forecast(self, today_kwh: float, tomorrow_kwh: float):
@@ -567,8 +610,8 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
             for hour_str, kwh in hourly_data.items():
                 try:
                     hour = int(hour_str)
-                    if 0 <= hour < 24 and kwh is not None and kwh >= 0: # Zusätzlicher None Check
-                        ratio = kwh / actual_total if actual_total > 0 else 0 # Zusätzlicher Zero Division Check
+                    if 0 <= hour < 24 and kwh is not None and kwh >= 0: 
+                        ratio = kwh / actual_total if actual_total > 0 else 0 
                         hourly_ratios[hour].append(ratio)
                 except (ValueError, TypeError):
                     continue 
@@ -592,15 +635,15 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                 new_profile[str(hour)] = 0.0
 
         if total_ratio <= 0:
-             _LOGGER.warning("Gesamtsumme der Profil-Ratios ist 0. Erstelle gleichmäßiges Standardprofil.")
-             self.hourly_profile = {str(h): (1/24) for h in range(24)}
+            _LOGGER.warning("Gesamtsumme der Profil-Ratios ist 0. Erstelle gleichmäßiges Standardprofil.")
+            self.hourly_profile = {str(h): (1/24) for h in range(24)}
         else:
             for hour_str in new_profile:
                 new_profile[hour_str] = new_profile[hour_str] / total_ratio
             
             self.hourly_profile = new_profile
         
-        await self._async_save_hourly_profile() # Verwendet nun die asynchrone Save-Funktion
+        await self._async_save_hourly_profile() 
         _LOGGER.info(f"✅ Stundenprofil erfolgreich aus {days_processed} Tagen gelernt und gespeichert.")
 
 
@@ -641,7 +684,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
                     next_hour_weather = forecast
                     break
             except Exception:
-                continue # Ungültiges Zeitformat
+                continue 
 
         if not next_hour_weather:
             _LOGGER.warning(f"Konnte keine Wetterprognose für {next_hour_int}:00 Uhr finden.")
@@ -655,7 +698,7 @@ class SolarForecastCoordinator(DataUpdateCoordinator):
             
             weather_factor = WEATHER_FACTORS.get(condition, 0.4)
             if cloud_coverage is not None:
-                try: # Absicherung für Cloud-Coverage Typ
+                try: 
                     cloud_coverage_float = float(cloud_coverage)
                     weather_factor *= (1 - (cloud_coverage_float / 100.0))
                 except (ValueError, TypeError):

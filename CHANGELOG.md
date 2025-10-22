@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [4.4.6] - 2025-10-22
+
+### 🔧 Critical Stability & Data Integrity Fixes
+
+This is a critical stability patch that addresses three distinct bugs: a startup crash, a nightly learning crash, and a potential for complete data loss. Upgrading is strongly recommended for all users.
+
+#### Data Integrity
+- **Fix (Data Loss):** Fixed a critical bug where `learned_weights.json`, `prediction_history.json`, or `hourly_profile.json` could be **wiped or corrupted** if Home Assistant crashed or lost power at the exact moment the integration was saving.
+- **Symptom:** Users might have experienced a sudden reset of their model's accuracy or history after a system restart.
+- **Change:** All file I/O in `helpers.py` now uses Home Assistant's native **atomic write helpers** (`save_json`). This ensures that data is written to a temporary file first, and the original file is only replaced upon success, guaranteeing data integrity.
+
+#### Startup & Runtime Stability
+- **Fix (Startup Crash):** Resolved a race condition during Home Assistant startup.
+- **Symptom:** Users would see an error log: `Referenced entities weather.your_entity are missing or not currently available` when HA was restarting. This occurred because the integration tried to fetch a forecast *before* the weather integration was fully loaded.
+- **Change:** The coordinator (`coordinator.py`) now has a "wait-for-ready" check. It actively polls for the `weather_entity` to become available (retrying for several seconds) before attempting the first forecast, eliminating the startup error.
+
+- **Fix (Nightly Crash):** Hardened the nightly learning function (`_midnight_learning`).
+- **Symptom:** The integration would crash for some users exactly at 23:00:00 (11:00 PM). This was caused by the `power_entity` (daily yield sensor) reporting an invalid `None` state, which was not correctly handled.
+- **Change:** The error handling in `coordinator.py` now catches `TypeError` (caused by `float(None)`) in addition to `ValueError`. This prevents the crash and allows the learning cycle to complete safely, even with misbehaving sensors. This fix was also applied to the autarky calculation.
+
+### ⚠️ Known Issue (Home Assistant Core Bug)
+
+#### Inability to Remove Optional Sensors
+- This patch does **not** fix the known issue where **optional sensors** (e.g., Lux, Temp, Wind) **cannot be removed** via the "Reconfigure" dialog once they have been set.
+- **This is a confirmed bug in the Home Assistant Core frontend** and cannot be fixed within this integration. The HA UI incorrectly sends the *old* sensor value back to the integration instead of "empty" or `None`.
+- **Official Workaround:** To remove an optional sensor, you must **delete** the integration and **re-add** it. Your learned data (weights, history) **will not be lost** during this process and will be recognized immediately.
+
+**No breaking changes** – This is a critical stability update. All users are strongly encouraged to upgrade.
+
+
+
 ## [4.4.3] - 2025-10-22
 
 ### 🔧 Bug Fixes & Stability Improvements
@@ -36,6 +67,7 @@ Special thanks to the following community members for their contributions, testi
 - Op3ra7or262
 
 ---
+
 
 ## [4.4.2] - 2025-10-22
 

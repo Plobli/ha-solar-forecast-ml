@@ -1,7 +1,7 @@
 {
   "domain": "solar_forecast_ml",
   "name": "Solar Forecast ML",
-  "version": "4.4.3",
+  "version": "4.4.6",
   "documentation": "https://github.com/Zara-Toorox/ha-solar-forecast-ml",
   "issue_tracker": "https://github.com/Zara-Toorox/ha-solar-forecast-ml/issues",
   "requirements": [],
